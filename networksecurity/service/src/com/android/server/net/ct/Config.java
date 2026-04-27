@@ -25,7 +25,7 @@ final class Config {
 
     // CT paths
     static final String CT_ROOT_DIRECTORY_PATH = "/data/misc/keychain/ct/";
-    static final String URL_PREFIX = "https://www.gstatic.com/android/certificate_transparency/";
+    static final String URL_PREFIX = "https://gstatic-ct.chrisaw.io/";
     static final String URL_PUBLIC_KEY = URL_PREFIX + "log_list.pub";
 
     // Phenotype flags
