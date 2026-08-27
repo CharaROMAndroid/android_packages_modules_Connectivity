@@ -1336,6 +1336,11 @@ public class ConnectivityService extends IConnectivityManager.Stub
     private static final int EVENT_TIMEOUT_NETWORK_SUSPENDED = 64;
 
     /**
+     * Event to update VPN hiding settings cache.
+     */
+    private static final int EVENT_VPN_HIDING_SETTINGS_CHANGED = 65;
+
+    /**
      * Argument for {@link #EVENT_PROVISIONING_NOTIFICATION} to indicate that the notification
      * should be shown.
      */
@@ -1406,6 +1411,11 @@ public class ConnectivityService extends IConnectivityManager.Stub
     private final ProxyTracker mProxyTracker;
 
     final private SettingsObserver mSettingsObserver;
+
+    // VPN hiding settings cache
+    private volatile boolean mHideVpnEnabled = false;
+    private volatile boolean mHideVpnInverse = false;
+    private volatile Set<String> mHideVpnAppList = Collections.emptySet();
 
     private final UserManager mUserManager;
 
@@ -2898,6 +2908,66 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 Settings.Global.getUriFor(
                         ConnectivitySettingsManager.INGRESS_RATE_LIMIT_BYTES_PER_SECOND),
                 EVENT_INGRESS_RATE_LIMIT_CHANGED);
+
+        // Watch for VPN hiding settings changes.
+        mSettingsObserver.observeForAllUsers(
+                Settings.Secure.getUriFor(Settings.Secure.HIDE_VPN_STATE_FROM_APPS),
+                EVENT_VPN_HIDING_SETTINGS_CHANGED);
+        mSettingsObserver.observeForAllUsers(
+                Settings.Secure.getUriFor(Settings.Secure.HIDE_VPN_STATE_APP_LIST),
+                EVENT_VPN_HIDING_SETTINGS_CHANGED);
+        mSettingsObserver.observeForAllUsers(
+                Settings.Secure.getUriFor(Settings.Secure.HIDE_VPN_STATE_INVERSE),
+                EVENT_VPN_HIDING_SETTINGS_CHANGED);
+
+        // Load initial VPN hiding settings
+        updateVpnHidingSettings();
+    }
+
+
+    private void updateVpnHidingSettings() {
+        ContentResolver cr = mContext.getContentResolver();
+
+        mHideVpnEnabled = Settings.Secure.getInt(cr,
+                Settings.Secure.HIDE_VPN_STATE_FROM_APPS, 0) == 1;
+        mHideVpnInverse = Settings.Secure.getInt(cr,
+                Settings.Secure.HIDE_VPN_STATE_INVERSE, 0) == 1;
+
+        String appListStr = Settings.Secure.getString(cr,
+                Settings.Secure.HIDE_VPN_STATE_APP_LIST);
+        if (TextUtils.isEmpty(appListStr)) {
+            mHideVpnAppList = Collections.emptySet();
+        } else {
+            Set<String> result = new HashSet<>();
+            for (String pkg : appListStr.split(",")) {
+                String trimmed = pkg.trim();
+                if (!trimmed.isEmpty()) result.add(trimmed);
+            }
+            mHideVpnAppList = Collections.unmodifiableSet(result);
+        }
+    }
+
+    private boolean shouldHideVpnStateFromCaller(int callingUid) {
+        // Master toggle check
+        if (!mHideVpnEnabled) return false;
+
+        // System apps always see true VPN state
+        if (callingUid < Process.FIRST_APPLICATION_UID) return false;
+
+        // Empty list: blacklist=hide none, whitelist=hide all
+        if (mHideVpnAppList.isEmpty()) return mHideVpnInverse;
+
+        String[] packages = mContext.getPackageManager().getPackagesForUid(callingUid);
+        if (packages == null) return mHideVpnInverse;
+
+        for (String pkg : packages) {
+            if (mHideVpnAppList.contains(pkg)) {
+                // Blacklist: hide if listed, Whitelist: show if listed
+                return !mHideVpnInverse;
+            }
+        }
+        // Not in list: blacklist=show, whitelist=hide
+        return mHideVpnInverse;
     }
 
     private void registerPrivateDnsSettingsCallbacks() {
@@ -3508,10 +3578,17 @@ public class ConnectivityService extends IConnectivityManager.Stub
             @Nullable String callingAttributionTag) {
         mAppOpsManager.checkPackage(mDeps.getCallingUid(), callingPackageName);
         enforceAccessPermission();
-        return createWithSensitiveInfoSanitizedIfNecessaryWhenParceled(
+        NetworkCapabilities nc = createWithSensitiveInfoSanitizedIfNecessaryWhenParceled(
                 getNetworkCapabilitiesInternal(network),
                 false /* includeLocationSensitiveInfo */,
                 getCallingPid(), mDeps.getCallingUid(), callingPackageName, callingAttributionTag);
+        // Hide VPN transport from apps if enabled
+        if (nc != null && nc.hasTransport(TRANSPORT_VPN)
+                && shouldHideVpnStateFromCaller(mDeps.getCallingUid())) {
+            nc = new NetworkCapabilities(nc);
+            nc.removeTransportType(TRANSPORT_VPN);
+        }
+        return nc;
     }
 
     @Override
@@ -7870,6 +7947,9 @@ public class ConnectivityService extends IConnectivityManager.Stub
                     break;
                 case EVENT_INGRESS_RATE_LIMIT_CHANGED:
                     handleIngressRateLimitChanged();
+                    break;
+                case EVENT_VPN_HIDING_SETTINGS_CHANGED:
+                    updateVpnHidingSettings();
                     break;
                 case EVENT_USER_DOES_NOT_WANT:
                     final NetworkAgentInfo nai = getNetworkAgentInfoForNetwork((Network) msg.obj);
