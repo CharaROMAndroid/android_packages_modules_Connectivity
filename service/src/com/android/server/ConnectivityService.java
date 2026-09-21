@@ -538,6 +538,11 @@ public class ConnectivityService extends IConnectivityManager.Stub
     private static final String PERMISSION_CREATE_APP_SPECIFIC_NETWORK =
             "android.permission.CREATE_APP_SPECIFIC_NETWORK";
 
+    // VPN hiding settings keys (defined locally since APEX can't access Settings.Secure extensions)
+    private static final String HIDE_VPN_STATE_FROM_APPS = "hide_vpn_state_from_apps";
+    private static final String HIDE_VPN_STATE_APP_LIST = "hide_vpn_state_app_list";
+    private static final String HIDE_VPN_STATE_INVERSE = "hide_vpn_state_inverse";
+
     // The maximum value for the blocking validation result, in milliseconds.
     public static final int MAX_VALIDATION_IGNORE_AFTER_ROAM_TIME_MS = 10000;
 
@@ -2911,13 +2916,13 @@ public class ConnectivityService extends IConnectivityManager.Stub
 
         // Watch for VPN hiding settings changes.
         mSettingsObserver.observeForAllUsers(
-                Settings.Secure.getUriFor(Settings.Secure.HIDE_VPN_STATE_FROM_APPS),
+                Settings.Secure.getUriFor(HIDE_VPN_STATE_FROM_APPS),
                 EVENT_VPN_HIDING_SETTINGS_CHANGED);
         mSettingsObserver.observeForAllUsers(
-                Settings.Secure.getUriFor(Settings.Secure.HIDE_VPN_STATE_APP_LIST),
+                Settings.Secure.getUriFor(HIDE_VPN_STATE_APP_LIST),
                 EVENT_VPN_HIDING_SETTINGS_CHANGED);
         mSettingsObserver.observeForAllUsers(
-                Settings.Secure.getUriFor(Settings.Secure.HIDE_VPN_STATE_INVERSE),
+                Settings.Secure.getUriFor(HIDE_VPN_STATE_INVERSE),
                 EVENT_VPN_HIDING_SETTINGS_CHANGED);
 
         // Load initial VPN hiding settings
@@ -2929,12 +2934,12 @@ public class ConnectivityService extends IConnectivityManager.Stub
         ContentResolver cr = mContext.getContentResolver();
 
         mHideVpnEnabled = Settings.Secure.getInt(cr,
-                Settings.Secure.HIDE_VPN_STATE_FROM_APPS, 0) == 1;
+                HIDE_VPN_STATE_FROM_APPS, 0) == 1;
         mHideVpnInverse = Settings.Secure.getInt(cr,
-                Settings.Secure.HIDE_VPN_STATE_INVERSE, 0) == 1;
+                HIDE_VPN_STATE_INVERSE, 0) == 1;
 
         String appListStr = Settings.Secure.getString(cr,
-                Settings.Secure.HIDE_VPN_STATE_APP_LIST);
+                HIDE_VPN_STATE_APP_LIST);
         if (TextUtils.isEmpty(appListStr)) {
             mHideVpnAppList = Collections.emptySet();
         } else {
