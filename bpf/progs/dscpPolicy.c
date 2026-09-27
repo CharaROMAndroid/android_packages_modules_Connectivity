@@ -248,6 +248,10 @@ function void match_policy(struct __sk_buff* skb, const bool ipv4) {
         bpf_for_each_ipv6_dscp_policies_map_elem(compute, &ctx);
     }
 #else
+    /* Legacy verifiers lack bounded-loop support. Unroll the policy scan
+     * into straight-line BPF while preserving the policy matching logic.
+     */
+#pragma unroll
     for (register uint64_t i = 0; i < MAX_POLICIES; i++) {
         // Using a uint64 in for loop prevents infinite loop during BPF load,
         // but the key is uint32, so convert back.

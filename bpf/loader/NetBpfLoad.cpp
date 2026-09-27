@@ -1090,7 +1090,9 @@ static int loadCodeSections(const ElfObject& elfObj, vector<codeSection>& cs,
 
             if (!fd.ok()) {
                 // kernel NULL terminates log_buf, so this checks for non-empty string
-                if (log_buf[0] && !isUser) {
+                // Retain verifier diagnostics on user builds too, including
+                // failures caused by incomplete legacy-kernel BPF backports.
+                if (log_buf[0]) {
                     vector<string> lines = Split(log_buf, "\n");
 
                     ALOGW("BPF_PROG_LOAD - BEGIN log_buf contents:");

@@ -111,7 +111,11 @@ class BpfMapRO {
   protected:
     void abortOnMismatch(bool writable) const {
         if (!mMapFd.ok()) Abort(errno, "mMapFd %d is not valid", mMapFd.get());
-        if (isAtLeastKernelVersion(4, 14)) {
+        // The minimum-kernel policy can fold isAtLeastKernelVersion(4, 14)
+        // to true even on legacy kernels with selected BPF backports.
+        // Gate map-info validation on the reported runtime version instead.
+        // This includes any version override; it is not a capability probe.
+        if (kernelVersion() >= KVER(4, 14, 0)) {
             int flags = bpfGetFdMapFlags(mMapFd);
             if (flags < 0) Abort(errno, "bpfGetFdMapFlags fail: flags=%d", flags);
             if (flags & BPF_F_WRONLY) Abort(0, "map is write-only (flags=0x%X)", flags);
