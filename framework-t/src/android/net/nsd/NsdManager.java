@@ -1112,6 +1112,61 @@ public final class NsdManager {
         }
     }
 
+    private INsdServiceConnector createStubbedINsdServiceConnector() {
+        return new NsdServiceConnectorStub(mHandler);
+    }
+
+    private static class NsdServiceConnectorStub implements INsdServiceConnector {
+        final NsdCallbackImpl callback;
+
+        private NsdServiceConnectorStub(Handler handler) {
+            callback = new NsdCallbackImpl(handler);
+        }
+
+        @Override public void registerService(int listenerKey,
+                AdvertisingRequest advertisingRequest) {
+            callback.onRegisterServiceFailed(listenerKey, FAILURE_INTERNAL_ERROR);
+        }
+        @Override public void unregisterService(int listenerKey) {
+            callback.onUnregisterServiceFailed(listenerKey, FAILURE_INTERNAL_ERROR);
+        }
+        @Override public void discoverServices(int listenerKey,
+                DiscoveryRequest discoveryRequest) {
+            callback.onDiscoverServicesFailed(listenerKey, FAILURE_INTERNAL_ERROR);
+        }
+        @Override public void stopDiscovery(int listenerKey) {
+            callback.onStopDiscoveryFailed(listenerKey, FAILURE_INTERNAL_ERROR);
+        }
+        @Override public void resolveService(int listenerKey, NsdServiceInfo serviceInfo) {
+            callback.onResolveServiceFailed(listenerKey, FAILURE_INTERNAL_ERROR);
+        }
+        @Override public void startDaemon() {}
+        @Override public void stopResolution(int listenerKey) {
+            callback.onStopResolutionFailed(listenerKey, FAILURE_INTERNAL_ERROR);
+        }
+        @Override public void registerServiceInfoCallback(int listenerKey,
+                NsdServiceInfo serviceInfo) {
+            callback.onServiceInfoCallbackRegistrationFailed(listenerKey, FAILURE_INTERNAL_ERROR);
+        }
+        @Override public void registerServiceInfoCallbackWithRequest(int listenerKey,
+                DiscoveryRequest discoveryRequest) {
+            callback.onServiceInfoCallbackRegistrationFailed(listenerKey, FAILURE_INTERNAL_ERROR);
+        }
+        @Override public void unregisterServiceInfoCallback(int listenerKey) {
+            callback.onServiceInfoCallbackUnregistered(listenerKey);
+        }
+        @Override public void registerOffloadEngine(String ifaceName, IOffloadEngine cb,
+                long offloadCapabilities, long offloadType) {}
+        @Override public void unregisterOffloadEngine(IOffloadEngine cb) {}
+        @Override public void injectOffloadEngineResponse(NsdServiceInfo serviceInfo,
+                boolean isServiceLost, String ifaceName) {}
+        @Override public void checkPermissionForService(String serviceName, String serviceType,
+                ResultReceiver resultReceiver) {
+            resultReceiver.send(SERVICE_PERMISSION_DENIED, null);
+        }
+        @Override public android.os.IBinder asBinder() { return null; }
+    }
+
     /**
      * Create a new Nsd instance. Applications use
      * {@link android.content.Context#getSystemService Context.getSystemService()} to retrieve
@@ -1127,8 +1182,10 @@ public final class NsdManager {
         mHandler = new ServiceHandler(ConnectivityThread.getInstanceLooper());
 
         try {
-            mService = service.connect(new NsdCallbackImpl(mHandler), CompatChanges.isChangeEnabled(
-                    ENABLE_PLATFORM_MDNS_BACKEND), context.getPackageName());
+            final INsdServiceConnector connector = service.connect(new NsdCallbackImpl(mHandler),
+                    CompatChanges.isChangeEnabled(ENABLE_PLATFORM_MDNS_BACKEND),
+                    context.getPackageName());
+            mService = connector != null ? connector : createStubbedINsdServiceConnector();
         } catch (RemoteException e) {
             throw new RuntimeException("Failed to connect to NsdService");
         }
@@ -1160,7 +1217,8 @@ public final class NsdManager {
         }
 
         private void sendDiscoveryRequest(
-                int message, int listenerKey, DiscoveryRequest discoveryRequest) {
+                int message, int listenerKey,
+                DiscoveryRequest discoveryRequest) {
             mServHandler.sendMessage(
                     mServHandler.obtainMessage(message, 0, listenerKey, discoveryRequest));
         }
@@ -1174,7 +1232,8 @@ public final class NsdManager {
         }
 
         @Override
-        public void onDiscoverServicesStarted(int listenerKey, DiscoveryRequest discoveryRequest) {
+        public void onDiscoverServicesStarted(int listenerKey,
+                DiscoveryRequest discoveryRequest) {
             sendDiscoveryRequest(DISCOVER_SERVICES_STARTED, listenerKey, discoveryRequest);
         }
 
