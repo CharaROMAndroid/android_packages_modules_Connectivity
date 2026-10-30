@@ -441,6 +441,24 @@ public class NsdServiceTest {
         Mockito.framework().clearInlineMocks();
     }
 
+    @Test
+    public void testConnectRejectsLockdownClient() {
+        final int uid = mDeps.getCallingUid();
+        final INsdManagerCallback callback = mock(INsdManagerCallback.class);
+        doReturn(true).when(mDeps).isRegularAppWithLockdownVpnEnabled(mContext, uid);
+        assertNull(mService.connect(callback, true, mPackageName));
+        verify(mDeps).isRegularAppWithLockdownVpnEnabled(mContext, uid);
+    }
+
+    @Test
+    public void testConnectAllowsNonLockdownClient() {
+        final int uid = mDeps.getCallingUid();
+        doReturn(false).when(mDeps).isRegularAppWithLockdownVpnEnabled(mContext, uid);
+        final INsdManagerCallback callback = mock(INsdManagerCallback.class);
+        doReturn(mock(IBinder.class)).when(callback).asBinder();
+        assertNotNull(mService.connect(callback, true, mPackageName));
+    }
+
     // Native mdns provided by Netd is removed after U.
     @DevSdkIgnoreRule.IgnoreAfter(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     @Test

@@ -3099,6 +3099,11 @@ public class NsdService extends INsdManager.Stub {
             return DeviceConfig.getInt(NAMESPACE_TETHERING, config, defaultValue);
         }
 
+        /** Returns whether this caller is a regular app covered by per-user VPN lockdown. */
+        public boolean isRegularAppWithLockdownVpnEnabled(Context context, int uid) {
+            return ConnectivityUtil.isRegularAppWithLockdownVpnEnabled(context, uid);
+        }
+
         /**
          * @see Binder#getCallingUid()
          */
@@ -3451,7 +3456,7 @@ public class NsdService extends INsdManager.Stub {
         }
         // Unfortunately we have to allow system apps to use this service even when under a lockdown
         // VPN, otherwise would break things.
-        if (ConnectivityUtil.isRegularAppWithLockdownVpnEnabled(mContext, uid)) {
+        if (mDeps.isRegularAppWithLockdownVpnEnabled(mContext, uid)) {
             Log.d(TAG, "connect(): caller (uid " + uid + ") is under VPN lockdown, returning null");
             return null;
         }
