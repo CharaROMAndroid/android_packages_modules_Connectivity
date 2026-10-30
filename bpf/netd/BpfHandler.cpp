@@ -162,6 +162,9 @@ static Result<void> initPrograms(const char* cg2_path) {
                                         cg_fd, BPF_CGROUP_UDP6_SENDMSG));
         }
 
+        // The sockopt hook requires upstream d8fe449a9c51 (5.8), backported
+        // in the supported dre/milanf 5.4 kernels. Keep the existing 5.4 gate;
+        // other legacy kernels must also provide the optlen == 0 backport.
         if (isAtLeastKernelVersion(5, 4)) {
             RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_GETSOCKOPT_PROG_PATH,
                                         cg_fd, BPF_CGROUP_GETSOCKOPT));
