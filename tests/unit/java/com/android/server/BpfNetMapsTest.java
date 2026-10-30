@@ -27,6 +27,7 @@ import static android.net.BpfNetMapsConstants.DOZABLE_MATCH;
 import static android.net.BpfNetMapsConstants.HAPPY_BOX_MATCH;
 import static android.net.BpfNetMapsConstants.IIF_MATCH;
 import static android.net.BpfNetMapsConstants.LOCKDOWN_VPN_MATCH;
+import static android.net.BpfNetMapsConstants.LOCKDOWN_VPN_REGULAR_APP_MATCH;
 import static android.net.BpfNetMapsConstants.LOW_POWER_STANDBY_MATCH;
 import static android.net.BpfNetMapsConstants.NO_MATCH;
 import static android.net.BpfNetMapsConstants.OEM_DENY_1_MATCH;
@@ -235,6 +236,7 @@ public final class BpfNetMapsTest {
     @Mock INetd mNetd;
     @Mock BpfNetMaps.Dependencies mDeps;
     @Mock Context mContext;
+    @Mock android.content.pm.PackageManager mPackageManager;
 
     @Mock InterfaceTracker mInterfaceTracker;
     private final IBpfMap<S32, U32> mConfigurationMap = new TestBpfMap<>(S32.class, U32.class);
@@ -315,6 +317,7 @@ public final class BpfNetMapsTest {
                 mLoopbackAccessMetricsEnabledBpfBoolean);
         BpfNetMaps.setLoopbackChecksEnabledBpfBooleanForTest(mLoopbackChecksEnabledBpfBoolean);
         BpfNetMaps.setInitializedForTest(false);
+        doReturn(mPackageManager).when(mContext).getPackageManager();
         mBpfNetMaps = new BpfNetMaps(mContext, mNetd, mDeps, mInterfaceTracker);
     }
 
@@ -882,7 +885,8 @@ public final class BpfNetMapsTest {
 
         mBpfNetMaps.updateUidLockdownRule(TEST_UID, add);
 
-        final long expectedMatch = add ? match | LOCKDOWN_VPN_MATCH : match & ~LOCKDOWN_VPN_MATCH;
+        final long lockdownMatches = LOCKDOWN_VPN_MATCH | LOCKDOWN_VPN_REGULAR_APP_MATCH;
+        final long expectedMatch = add ? match | lockdownMatches : match & ~lockdownMatches;
         checkUidOwnerValue(TEST_UID, iif, expectedMatch);
     }
 
@@ -919,6 +923,28 @@ public final class BpfNetMapsTest {
 
         // LOCKDOWN_VPN_MATCH is not enabled
         doTestUpdateUidLockdownRule(NO_IIF, POWERSAVE_MATCH | RESTRICTED_MATCH, REMOVE);
+    }
+
+    @Test
+    @IgnoreUpTo(Build.VERSION_CODES.S_V2)
+    public void testUpdateUidLockdownRuleSystemAndRemoval() throws Exception {
+        final int coreUid = android.os.Process.SYSTEM_UID;
+        mBpfNetMaps.updateUidLockdownRule(coreUid, ADD);
+        checkUidOwnerValue(coreUid, NO_IIF, LOCKDOWN_VPN_MATCH);
+
+        final android.content.pm.ApplicationInfo info =
+                new android.content.pm.ApplicationInfo();
+        info.flags = android.content.pm.ApplicationInfo.FLAG_SYSTEM;
+        doReturn(new String[] {"system.app"}).when(mPackageManager).getPackagesForUid(TEST_UID);
+        doReturn(info).when(mPackageManager).getApplicationInfoAsUser(
+                eq("system.app"), eq(0), eq(android.os.UserHandle.getUserId(TEST_UID)));
+        mBpfNetMaps.updateUidLockdownRule(TEST_UID, ADD);
+        checkUidOwnerValue(TEST_UID, NO_IIF, LOCKDOWN_VPN_MATCH);
+
+        mUidOwnerMap.updateEntry(new S32(TEST_UID), new UidOwnerValue(TEST_IF_INDEX,
+                LOCKDOWN_VPN_MATCH | LOCKDOWN_VPN_REGULAR_APP_MATCH | IIF_MATCH));
+        mBpfNetMaps.updateUidLockdownRule(TEST_UID, REMOVE);
+        checkUidOwnerValue(TEST_UID, TEST_IF_INDEX, IIF_MATCH);
     }
 
     @Test
