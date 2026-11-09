@@ -187,7 +187,7 @@ class CertificateTransparencyDownloader extends BroadcastReceiver {
                 Log.e(TAG, "Invalid URIs");
                 return;
             }
-            ContentResolver cr = mContext.getContentResolver();
+            ContentResolver cr = context.getContentResolver();
             try (var contentStream = cr.openInputStream(contentUri);
                  var metadataStream = cr.openInputStream(metadataUri)) {
                 if (contentStream == null) {
