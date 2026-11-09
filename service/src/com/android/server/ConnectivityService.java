@@ -2797,6 +2797,19 @@ public class ConnectivityService extends IConnectivityManager.Stub
 
         mSettingsObserver = new SettingsObserver(mContext, mHandler, mDeps);
         registerSettingsCallbacks();
+        mDeps.registerContentObserverAsUser(mContext.getContentResolver(),
+                Settings.Secure.getUriFor(VPN_STATE_HIDDEN_PACKAGES), false,
+                new ContentObserver(mHandler) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        mVpnHiddenPackages.clear();
+                        rematchAllNetworksAndRequests();
+                        for (NetworkAgentInfo nai : mNetworkAgentInfos) {
+                            notifyNetworkCallbacks(nai, CALLBACK_CAP_CHANGED);
+                            notifyNetworkCallbacks(nai, CALLBACK_IP_CHANGED);
+                        }
+                    }
+                }, UserHandle.ALL);
 
         mKeepaliveTracker = mDeps.makeAutomaticOnOffKeepaliveTracker(mContext, mHandler);
         mNotifier = new NetworkNotificationManager(mContext, mTelephonyManager);
@@ -3203,6 +3216,99 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 Integer.toHexString(blocked)));
     }
 
+    // Per-user package names, not UIDs: package reinstalls must not transfer this choice to
+    // an unrelated app. Shared-UID packages necessarily share the same network view.
+    private static final String VPN_STATE_HIDDEN_PACKAGES = "vpn_state_hidden_packages";
+    private final java.util.concurrent.ConcurrentHashMap<Integer, String> mVpnHiddenPackages =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private boolean shouldConcealVpnState(int uid, int ownerUid) {
+        if (UserHandle.getAppId(uid) < Process.FIRST_APPLICATION_UID || uid == ownerUid) {
+            return false;
+        }
+        // This method is also called from handler callbacks. Never use Binder.getCallingUid()
+        // here: asynchronous delivery runs as system_server, not as the recipient.
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final String selected = mVpnHiddenPackages.computeIfAbsent(UserHandle.getUserId(uid),
+                    userId -> {
+                        final String value = Settings.Secure.getStringForUser(
+                                mContext.getContentResolver(), VPN_STATE_HIDDEN_PACKAGES, userId);
+                        return value == null ? "" : value;
+                    });
+            if (TextUtils.isEmpty(selected)) return false;
+            final String[] packages = mContext.getPackageManager().getPackagesForUid(uid);
+            if (packages == null) return false;
+            final Set<String> selectedPackages =
+                    new ArraySet<>(java.util.Arrays.asList(selected.split(",")));
+            for (String pkg : packages) {
+                if (selectedPackages.contains(pkg)) return true;
+            }
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    @Nullable
+    private NetworkAgentInfo getVpnCoverNetwork(NetworkCapabilities nc, int uid) {
+        final List<Network> underlying = nc.getUnderlyingNetworks();
+        if (underlying != null) {
+            // An explicitly empty list means there is no underlying network. Do not invent one.
+            for (Network network : underlying) {
+                final NetworkAgentInfo nai = getNetworkAgentInfoForNetwork(network);
+                if (nai != null && !nai.isVPN()) return nai;
+            }
+            return null;
+        }
+        final NetworkAgentInfo nai = getDefaultNetworkForUid(uid);
+        return nai != null && !nai.isVPN() ? nai : null;
+    }
+
+    private NetworkCapabilities concealVpnCapabilities(NetworkCapabilities nc, int uid) {
+        if (!nc.hasTransport(TRANSPORT_VPN) || !shouldConcealVpnState(uid, nc.getOwnerUid())) {
+            return nc;
+        }
+        final NetworkAgentInfo cover = getVpnCoverNetwork(nc, uid);
+        final NetworkCapabilities result = new NetworkCapabilities(nc);
+        result.setNetworkSpecifier(null);
+        for (int transport : result.getTransportTypes()) result.removeTransportType(transport);
+        if (cover != null) {
+            for (int transport : cover.networkCapabilities.getTransportTypes()) {
+                result.addTransportType(transport);
+            }
+        }
+        result.addCapability(NET_CAPABILITY_NOT_VPN);
+        result.setTransportInfo(null);
+        result.setOwnerUid(INVALID_UID);
+        result.setAdministratorUids(new int[0]);
+        result.setUnderlyingNetworks(null);
+        result.setNetworkSpecifier(null);
+        // Retain the VPN's actual metering, validation, UID ranges and bandwidth semantics.
+        // In particular never mutate the agent's capabilities or its routing policy.
+        return result;
+    }
+
+    /**
+     * Recipient-specific matching view. Only explicitly selected app-originated requests
+     * change; system default, routing, lockdown and agent capabilities stay real.
+     * This is a server-internal API, not part of the framework module-lib API surface.
+     */
+    public NetworkCapabilities getCapabilitiesForVpnHidingRequest(
+            NetworkCapabilities nc, NetworkRequest request) {
+        return concealVpnCapabilities(nc, request.getRequestorUid());
+    }
+
+    private LinkProperties concealVpnLinkProperties(LinkProperties lp, int uid) {
+        final NetworkAgentInfo vpn = getVpnForUid(uid);
+        if (vpn == null || !shouldConcealVpnState(uid, vpn.networkCapabilities.getOwnerUid())
+                || !Objects.equals(lp.getInterfaceName(), vpn.linkProperties.getInterfaceName())) {
+            return lp;
+        }
+        final NetworkAgentInfo cover = getVpnCoverNetwork(vpn.networkCapabilities, uid);
+        return cover == null ? new LinkProperties() : new LinkProperties(cover.linkProperties);
+    }
+
     /**
      * Whether the existence of the VPN represented by {@code nai} should be hidden from
      * {@code uid}. VPNs are hidden from unprivileged apps that are neither routed through
@@ -3239,6 +3345,17 @@ public class ConnectivityService extends IConnectivityManager.Stub
     @NonNull
     private NetworkInfo filterNetworkInfo(@NonNull NetworkInfo networkInfo, int type,
             @NonNull NetworkCapabilities nc, int uid, boolean ignoreBlocked) {
+        if (nc.hasTransport(TRANSPORT_VPN) && shouldConcealVpnState(uid, nc.getOwnerUid())) {
+            final NetworkAgentInfo cover = getVpnCoverNetwork(nc, uid);
+            if (cover != null) {
+                networkInfo = cover.networkInfo;
+                type = cover.networkInfo.getType();
+            } else {
+                // No cover: avoid claiming WIFI or cellular connectivity that doesn't exist.
+                networkInfo = makeFakeNetworkInfo(ConnectivityManager.TYPE_NONE, uid);
+                type = ConnectivityManager.TYPE_NONE;
+            }
+        }
         final NetworkInfo filtered = new NetworkInfo(networkInfo);
         // Many legacy types (e.g,. TYPE_MOBILE_HIPRI) are not actually a property of the network
         // but only exists if an app asks about them or requests them. Ensure the requesting app
@@ -3890,6 +4007,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
         if (nc == null) {
             return null;
         }
+        nc = concealVpnCapabilities(nc, callingUid);
         // Avoid doing location permission check if the transport info has no location sensitive
         // data.
         final RedactionPermissionChecker redactionPermissionChecker =
@@ -3967,6 +4085,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     private LinkProperties linkPropertiesRestrictedForCallerPermissions(
             LinkProperties lp, int callerPid, int callerUid) {
         if (lp == null) return new LinkProperties();
+        lp = concealVpnLinkProperties(lp, callerUid);
         // Note : here it would be nice to check ACCESS_NETWORK_STATE and return null, but
         // this would be expensive (one more permission check every time any LP callback is
         // sent) and possibly dangerous : apps normally can't lose ACCESS_NETWORK_STATE, if

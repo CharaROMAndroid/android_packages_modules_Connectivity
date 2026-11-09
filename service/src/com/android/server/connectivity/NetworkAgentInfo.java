@@ -1320,16 +1320,23 @@ public class NetworkAgentInfo implements NetworkRanker.Scoreable {
                 && !isLingering();
     }
 
+    private NetworkCapabilities capabilitiesForRequest(NetworkRequest request) {
+        // Some host/unit fixtures construct agents without a ConnectivityService.
+        return mConnService == null ? networkCapabilities
+                : mConnService.getCapabilitiesForVpnHidingRequest(networkCapabilities, request);
+    }
+
     // Does this network satisfy request?
     public boolean satisfies(NetworkRequest request) {
         return everConnected()
-                && request.networkCapabilities.satisfiedByNetworkCapabilities(networkCapabilities);
+                && request.networkCapabilities.satisfiedByNetworkCapabilities(
+                        capabilitiesForRequest(request));
     }
 
     public boolean satisfiesImmutableCapabilitiesOf(NetworkRequest request) {
         return everConnected()
                 && request.networkCapabilities.satisfiedByImmutableNetworkCapabilities(
-                        networkCapabilities);
+                        capabilitiesForRequest(request));
     }
 
     /** Whether this network is a VPN. */
