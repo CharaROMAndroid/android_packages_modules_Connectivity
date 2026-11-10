@@ -3230,10 +3230,13 @@ public class ConnectivityService extends IConnectivityManager.Stub
         // here: asynchronous delivery runs as system_server, not as the recipient.
         final long token = Binder.clearCallingIdentity();
         try {
-            final String selected = mVpnHiddenPackages.computeIfAbsent(UserHandle.getUserId(uid),
+            final String selected = mVpnHiddenPackages.computeIfAbsent(
+                    UserHandle.getUserHandleForUid(uid).getIdentifier(),
                     userId -> {
-                        final String value = Settings.Secure.getStringForUser(
-                                mContext.getContentResolver(), VPN_STATE_HIDDEN_PACKAGES, userId);
+                        // Module code: use public APIs only (no hidden *ForUser helpers).
+                        final String value = Settings.Secure.getString(
+                                mContext.createContextAsUser(UserHandle.of(userId), 0 /* flags */)
+                                        .getContentResolver(), VPN_STATE_HIDDEN_PACKAGES);
                         return value == null ? "" : value;
                     });
             if (TextUtils.isEmpty(selected)) return false;
